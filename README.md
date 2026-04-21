@@ -31,7 +31,8 @@ Implementations for the six-variant progressive ablation study used to quantify 
 ### 📊 Data & Evaluation
 * **`phase1_eval.json`**: Results of the zero-shot generator benchmarking study across six candidate LLMs (Llama, Gemini, Zephyr, etc.).
 * **`phase2_eval.json`**: The curated test set of 290 BioASQ-13b summary-type questions, stratified into **Fig-Yes** and **Fig-No** subsets.
-* **`pmid_domain_labels.csv`**: Metadata mapping the corpus of 29,532 papers across 22 standard biomedical domains (e.g., Genetics, Oncology).
+* **`pmid_domain_labels.csv`**: Metadata mapping the corpus of 30,000 papers across 22 standard biomedical domains (e.g., Genetics, Oncology). Kindly download the papers from the PMC OA subset if you want to replicate the corpus. 
+Link: https://pmc.ncbi.nlm.nih.gov/tools/ftp/
 
 ---
 
