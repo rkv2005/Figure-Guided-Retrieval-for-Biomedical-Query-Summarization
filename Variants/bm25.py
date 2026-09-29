@@ -1,11 +1,5 @@
-# ============================================================
-# BM25 HYBRID RETRIEVER
-# FAISS dense + BM25 sparse → RRF fusion → top-20
-# ============================================================
-
 import numpy as np
 from scipy.sparse import issparse
-
 
 class BM25Retriever:
     """
