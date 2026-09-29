@@ -1,11 +1,3 @@
-# ============================================================
-# VANILLA RAG RETRIEVER
-# FAISS dense only → top-60 candidates → top-20 by score
-# ============================================================
-
-import numpy as np
-
-
 class VanillaRetriever:
     """
     Pure dense retrieval baseline.
@@ -93,7 +85,7 @@ class VanillaRetriever:
 
             domain = meta.get('domain') or self.loader.bridge.get_domain(pmcid, pmid)
 
-            similarity = float(1 / (1 + raw_dist))
+            similarity = float(raw_dist)
 
             chunk_pool.append({
                 "chunk_id"   : cid,
