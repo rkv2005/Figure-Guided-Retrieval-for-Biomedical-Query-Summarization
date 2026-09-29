@@ -37,5 +37,5 @@ Link: https://pmc.ncbi.nlm.nih.gov/tools/ftp/
 ---
 
 ## 📝 Status
-**Current Status:** Under review at *Frontiers in Artificial Intelligence — Natural Language Processing*.
+**Current Status:** Published at *Frontiers in Artificial Intelligence — Natural Language Processing. DOI 10.3389/frai.2026.1861611*.
 
