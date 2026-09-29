@@ -1,30 +1,29 @@
-# ============================================================
-# RERANK RETRIEVER — V3
-# FAISS + BM25 → RRF fusion → Cross-Encoder rerank → MMR → top-20
-# ============================================================
-
 import numpy as np
 import torch
 from scipy.sparse import issparse
 
-
 class RerankRetriever:
     """
-    Hybrid retrieval with cross-encoder reranking and MMR diversification.
-    Query → FAISS top-100 + BM25 top-100 → RRF → CE rerank top-100
-          → drop score ≤ 0.0 → MMR k=20 λ=0.6 → top-20
+    Biomedically adapted hybrid retrieval with cross-encoder reranking 
+    and MMR diversiafication.
+    
+    Pipeline:
+    Query → FAISS top-100 + BM25 top-100 → RRF Fusion → MedCPT CE Rerank top-100
+          → Score Filtering (> Threshold) → CE Descending Sort 
+          → Anchor-Locked MMR (k=20, λ=0.6) → Final top-20 Chunks
     """
 
-    VARIANT      = "rerank"
-    RRF_K        = 60
-    CE_BATCH     = 64       # cross-encoder batch size
-    MMR_LAMBDA   = 0.6      # relevance weight in MMR (1-λ = diversity)
-    MMR_K        = 20       # final output size
+    VARIANT             = "rerank"
+    RRF_K               = 60
+    CE_BATCH            = 64       # Cross-encoder batch size
+    MMR_LAMBDA          = 0.6      # Relevance weight in MMR (1-λ = diversity)
+    MMR_K               = 20       # Final context payload size
+    CE_FILTER_THRESHOLD = 0.0      # Adjustable MedCPT logit threshold gate
 
     def __init__(self, loader):
         self.loader = loader
 
-        # Move CE to GPU if available
+        # Move Biomedical CE to GPU if available
         self._ce_device = "cuda" if torch.cuda.is_available() else "cpu"
         if self._ce_device == "cuda":
             self.loader.cross_encoder.model.to("cuda")
@@ -65,15 +64,13 @@ class RerankRetriever:
         return 1.0 / (self.RRF_K + rank)
 
     def _cross_encode(self, query: str, chunks: list[dict]) -> list[float]:
-        """
-        Score (query, chunk_text) pairs with cross-encoder.
-        Returns list of float scores, same length as chunks.
-        """
+        """Score (query, chunk_text) pairs with a biomedical cross-encoder."""
         pairs  = [(query, c['text'][:512]) for c in chunks]
         scores = self.loader.cross_encoder.predict(
             pairs,
             batch_size  = self.CE_BATCH,
             show_progress_bar = False,
+            activation_fct    = lambda x: x,  # ← BYPASS AUTO-SIGMOID SATURATION
         )
         return [float(s) for s in scores]
 
@@ -86,13 +83,13 @@ class RerankRetriever:
     ) -> list[dict]:
         """
         Maximal Marginal Relevance selection.
-        Uses CE scores as relevance, SBERT cosine as diversity penalty.
-        Returns top-k chunks maximising λ·relevance - (1-λ)·max_sim_to_selected.
+        Uses min-max normalized MedCPT logits as relevance and SBERT cosine similarity
+        as a redundancy penalty factor.
         """
         if len(chunks) <= k:
             return chunks
 
-        # Embed all chunk texts for diversity computation
+        # Embed chunk texts for diversity penalty computation
         texts     = [c['text'][:256] for c in chunks]
         embs      = self.loader.bert_model.encode(
             texts,
@@ -100,11 +97,11 @@ class RerankRetriever:
             normalize_embeddings = True,
             show_progress_bar  = False,
             batch_size         = 64,
-        )                                   # shape (n, 768)
+        )
 
         ce_scores = np.array([c['ce_score'] for c in chunks])
 
-        # Normalise CE scores to [0, 1] for MMR
+        # Min-Max normalization of unbounded MedCPT click logits into [0, 1]
         ce_min, ce_max = ce_scores.min(), ce_scores.max()
         if ce_max > ce_min:
             ce_norm = (ce_scores - ce_min) / (ce_max - ce_min)
@@ -119,10 +116,10 @@ class RerankRetriever:
                 break
 
             if not selected_indices:
-                # First pick: highest CE score
-                best = max(remaining, key=lambda i: ce_norm[i])
+                # FIXED: Since the candidate pool is now explicitly pre-sorted by CE score
+                # descending, index 0 is guaranteed to be your absolute top semantic match.
+                best = remaining[0]
             else:
-                # MMR: λ·relevance - (1-λ)·max_sim_to_selected
                 sel_embs   = embs[selected_indices]           # (s, 768)
                 rem_embs   = embs[remaining]                  # (r, 768)
                 sim_matrix = rem_embs @ sel_embs.T            # (r, s)
@@ -143,7 +140,7 @@ class RerankRetriever:
         self,
         query        : str,
         top_k        : int = 20,
-        n_candidates : int = 100,   # larger pool for reranking
+        n_candidates : int = 100,
     ) -> dict:
 
         # ── 1. FAISS dense search ─────────────────────────────
@@ -221,17 +218,23 @@ class RerankRetriever:
                 "faiss_score": faiss_scores.get(cid, 0.0),
                 "bm25_score" : bm25_scores.get(cid, 0.0),
                 "rrf_score"  : rrf_scores[cid],
-                "ce_score"   : 0.0,   # filled below
+                "ce_score"   : 0.0,
             })
+
+        total_ce_invocations = len(candidate_pool)
 
         # ── 5. Cross-encoder reranking ────────────────────────
         ce_scores_list = self._cross_encode(query, candidate_pool)
         for chunk, ce_s in zip(candidate_pool, ce_scores_list):
             chunk['ce_score'] = ce_s
-            chunk['score']    = chunk['rrf_score']   # ← RRF drives ordering
+            # FIXED: Preserving the transformer's fine-grained alignment signal for ranking
+            chunk['score']    = ce_s  
+                # Apply binary threshold filter gate
+        candidate_pool = [c for c in candidate_pool if c['ce_score'] > self.CE_FILTER_THRESHOLD]
         
-        candidate_pool = [c for c in candidate_pool if c['ce_score'] > 0.0]
-        candidate_pool.sort(key=lambda x: x['rrf_score'], reverse=True)  # ← sort by RRF
+        # FIXED: Sort candidate pool by CE score descending so that MMR's index-0 initialization 
+        # accurately locks onto the top-performing biomedical context asset.
+        candidate_pool.sort(key=lambda x: x['ce_score'], reverse=True)  
 
         # ── 6. MMR diversification ────────────────────────────
         top_chunks = self._mmr(
@@ -269,5 +272,6 @@ class RerankRetriever:
                 "returned"         : len(top_chunks),
                 "ce_device"        : self._ce_device,
                 "n_after_ce_filter": len(candidate_pool),
+                "ce_invocations"   : total_ce_invocations,
             }
         }
