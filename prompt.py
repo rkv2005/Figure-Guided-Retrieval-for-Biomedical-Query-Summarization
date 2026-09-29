@@ -11,12 +11,10 @@ VARIANTS = {
     "ffhrag",
 }
 
-# Per-variant chunk character limits — longer for richer variants
 CHUNK_CHAR_LIMITS = {
-    "vanilla"      : 600,
-    "bm25"         : 600,
-    "rerank"       : 600,
-    "filtering"    : 700,
+    "vanilla"      : 700,
+    "bm25"         : 700,
+    "rerank"       : 1500,
     "hierarchical" : 2500,
     "figureboost"  : 1500,
     "ffhrag"       : 1500,
@@ -27,7 +25,6 @@ N_CHUNKS = {
     "vanilla"      : 10,
     "bm25"         : 10,
     "rerank"       : 8,
-    "filtering"    : 8,
     "hierarchical" : 4,   # sections are longer, fewer needed
     "figureboost"  : 8,
     "ffhrag"       : 8,
@@ -87,7 +84,6 @@ def build_prompt(
         if fig_lines:
             figure_context = "\n".join(fig_lines) + "\n\n"
 
-    # ── Text context ───────────────────────────────────────────
     text_context = ""
     sections = retrieval_result.get("sections", [])
     chunks   = retrieval_result.get("chunks",   [])
@@ -129,6 +125,7 @@ def build_prompt(
 
 
 def clean_answer(answer: str) -> str:
+    """Strip model artifacts and reference markers from generated answer."""
     answer = re.sub(r'\[Figure \d+\]',  '', answer)
     answer = re.sub(r'\[Fig\.? \d+\]',  '', answer)
     answer = re.sub(r'\[Passage \d+\]', '', answer)
@@ -143,6 +140,7 @@ def clean_answer(answer: str) -> str:
 
 
 def truncate_to_target(answer: str, target: int = 75, max_words: int = 100) -> str:
+    """Trim answer to target word count at a sentence boundary."""
     words = answer.split()
     if len(words) <= target:
         return answer
@@ -156,3 +154,4 @@ def truncate_to_target(answer: str, target: int = 75, max_words: int = 100) -> s
         else:
             break
     return (' '.join(result) if result else ' '.join(words[:max_words]) + '.')
+    
